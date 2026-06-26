@@ -5,7 +5,9 @@ const runSeed = require('./seed');
 const classifyBorrower = require('./decisionTree');
 
 const app = express();
-const PORT = 3000;
+// 原本是：const PORT = 3000;
+// 請改成以下這行：
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
