@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>圖書系統 - 分類與推薦</title>
+  <style>
+    :root { --primary: #1976d2; --bg: #f4f6f8; --text: #333; --border: #ddd; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: var(--bg); color: var(--text); }
+    .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .full-width { grid-column: 1 / -1; }
+    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h2 { margin-top: 0; color: var(--primary); border-bottom: 2px solid var(--border); padding-bottom: 10px; }
+    
+    /* 表格 */
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: #f8f9fa; }
+    
+    /* 表單 */
+    .form-group { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 5px; font-weight: bold; }
+    select, input[type="text"], input[type="date"] { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; box-sizing: border-box; }
+    button { background: var(--primary); color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 16px; width: 100%; }
+    button:hover { background: #1565c0; }
+    
+    /* 標籤 Badge */
+    .badge { display: inline-block; padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 0.9em; margin-bottom: 10px; color: white; }
+    .type-專注型重度讀者 { background: #e53935; } /* 紅 */
+    .type-博覽型重度讀者 { background: #8e24aa; } /* 紫 */
+    .type-專注型輕度讀者 { background: #fb8c00; } /* 橘 */
+    .type-探索型輕度讀者 { background: #43a047; } /* 綠 */
+    
+    /* 統計特徵區 */
+    .stats-grid { display: flex; gap: 15px; margin-bottom: 15px; }
+    .stat-box { flex: 1; background: #e3f2fd; padding: 15px; border-radius: 6px; text-align: center; }
+    .stat-box .val { font-size: 1.5em; font-weight: bold; color: var(--primary); display: block; }
+    .stat-box .label { font-size: 0.85em; color: #555; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  
+  <div class="card full-width">
+    <h2>書籍列表</h2>
+    <div class="form-group" style="max-width: 200px;">
+      <select id="genre-filter" onchange="loadBooks()">
+        <option value="">全部類型</option>
+        <option value="小說">小說</option>
+        <option value="科普">科普</option>
+        <option value="商業">商業</option>
+        <option value="歷史">歷史</option>
+        <option value="漫畫">漫畫</option>
+      </select>
+    </div>
+    <div style="max-height: 300px; overflow-y: auto;">
+      <table>
+        <thead><tr><th>書名</th><th>類型</th><th>作者</th></tr></thead>
+        <tbody id="book-list"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>新增借閱</h2>
+    <form id="borrow-form" onsubmit="submitBorrow(event)">
+      <div class="form-group">
+        <label>選擇書籍</label>
+        <select id="borrow-book" required></select>
+      </div>
+      <div class="form-group">
+        <label>借閱者姓名 (可輸入舊讀者或新名字)</label>
+        <input type="text" id="borrow-name" required placeholder="例如：張三">
+      </div>
+      <div class="form-group">
+        <label>借閱日期</label>
+        <input type="date" id="borrow-date" required>
+      </div>
+      <button type="submit">確認借閱</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>個人化分析與推薦</h2>
+    <div class="form-group" style="display: flex; gap: 10px;">
+      <input type="text" id="search-name" placeholder="輸入借閱者姓名查詢">
+      <button type="button" onclick="loadRecommendation()" style="width: auto;">查詢分析</button>
+    </div>
+    
+    <div id="recommendation-result" style="display: none;">
+      <div id="user-badge" class="badge"></div>
+      
+      <div class="stats-grid">
+        <div class="stat-box">
+          <span class="val" id="stat-total">0</span>
+          <span class="label">總借閱次數</span>
+        </div>
+        <div class="stat-box">
+          <span class="val" id="stat-ratio">0%</span>
+          <span class="label">主要類型佔比</span>
+        </div>
+      </div>
+
+      <h3 style="margin-bottom: 5px; font-size: 1em;">專屬推薦書單：</h3>
+      <table>
+        <thead><tr><th>書名</th><th>類型</th></tr></thead>
+        <tbody id="rec-list"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // 頁面載入初始化
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('borrow-date').valueAsDate = new Date();
+    loadBooks();
+  });
+
+  // API 呼叫工具
+  async function fetchJSON(url, options = {}) {
+    const res = await fetch(url, options);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'API 請求失敗');
+    return data;
+  }
+
+  // 1. 載入書籍 (含篩選與下拉選單更新)
+  async function loadBooks() {
+    const genre = document.getElementById('genre-filter').value;
+    const url = genre ? `/api/books?genre=${genre}` : '/api/books';
+    
+    try {
+      const books = await fetchJSON(url);
+      
+      // 更新表格
+      const tbody = document.getElementById('book-list');
+      tbody.innerHTML = books.map(b => `<tr><td>${b.title}</td><td>${b.genre}</td><td>${b.author || '-'}</td></tr>`).join('');
+      
+      // 若為「全部」，同時更新借閱表單的下拉選單
+      if (!genre) {
+        const select = document.getElementById('borrow-book');
+        select.innerHTML = books.map(b => `<option value="${b.id}">${b.title} (${b.genre})</option>`).join('');
+      }
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // 2. 送出借閱
+  async function submitBorrow(e) {
+    e.preventDefault();
+    const payload = {
+      book_id: document.getElementById('borrow-book').value,
+      borrower_name: document.getElementById('borrow-name').value.trim(),
+      borrow_date: document.getElementById('borrow-date').value
+    };
+
+    try {
+      await fetchJSON('/api/borrow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      alert('借閱成功！');
+      document.getElementById('borrow-form').reset();
+      document.getElementById('borrow-date').valueAsDate = new Date();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // 3. 載入推薦與特徵分析
+  async function loadRecommendation() {
+    const name = document.getElementById('search-name').value.trim();
+    if (!name) return alert('請輸入借閱者姓名');
+
+    try {
+      // 取得類型與特徵
+      const typeData = await fetchJSON(`/api/borrowers/${encodeURIComponent(name)}/type`);
+      // 取得推薦書單
+      const recData = await fetchJSON(`/api/borrowers/${encodeURIComponent(name)}/recommendations`);
+
+      const resDiv = document.getElementById('recommendation-result');
+      resDiv.style.display = 'block';
+
+      // 渲染標籤
+      const badge = document.getElementById('user-badge');
+      badge.textContent = typeData.classification;
+      badge.className = `badge type-${typeData.classification}`;
+
+      // 渲染數值
+      document.getElementById('stat-total').textContent = typeData.total_borrows;
+      document.getElementById('stat-ratio').textContent = `${(typeData.top_genre_ratio * 100).toFixed(1)}%`;
+
+      // 渲染書單
+      const tbody = document.getElementById('rec-list');
+      if (recData.recommended_books.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="2">目前沒有合適的推薦書單</td></tr>';
+      } else {
+        tbody.innerHTML = recData.recommended_books.map(b => `<tr><td>${b.title}</td><td>${b.genre}</td></tr>`).join('');
+      }
+    } catch (err) {
+      alert(err.message);
+      document.getElementById('recommendation-result').style.display = 'none';
+    }
+  }
+</script>
+</body>
+</html>
